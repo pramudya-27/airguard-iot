@@ -6,6 +6,153 @@
 
 const API_BASE = '/api';
 
+/* ==========================================================================
+   BROWSER MQTT CLIENT (For Vercel Serverless Compatibility)
+   Connects directly from browser to HiveMQ Cloud via WebSocket (wss://)
+   and forwards incoming telemetry to the Flask backend via /api/log
+   ========================================================================== */
+const MQTT_CONFIG = {
+    host: '712b2488276943edbd55e938ca1ba12b.s1.eu.hivemq.cloud',
+    port: 8884,           // HiveMQ Cloud WSS port
+    username: 'mikail',
+    password: 'mikail123',
+    deviceId: 'AIRGUARD-01',
+    clientId: 'airguard-browser-' + Math.random().toString(16).substring(2, 8)
+};
+
+let mqttClient = null;
+let mqttConnected = false;
+
+const initBrowserMQTT = () => {
+    if (typeof Paho === 'undefined') {
+        console.warn('Paho MQTT library not loaded, skipping browser MQTT.');
+        return;
+    }
+
+    mqttClient = new Paho.MQTT.Client(MQTT_CONFIG.host, MQTT_CONFIG.port, MQTT_CONFIG.clientId);
+
+    mqttClient.onConnectionLost = (responseObject) => {
+        console.warn('Browser MQTT connection lost:', responseObject.errorMessage);
+        mqttConnected = false;
+        // Update status badge immediately
+        const mqttBadge = document.getElementById('mqtt-status');
+        if (mqttBadge) {
+            mqttBadge.textContent = 'DISCONNECTED';
+            mqttBadge.className = 'badge badge-danger';
+        }
+        // Reconnect after 5 seconds
+        setTimeout(initBrowserMQTT, 5000);
+    };
+
+    mqttClient.onMessageArrived = async (message) => {
+        try {
+            const topic = message.destinationName;
+            const payload = JSON.parse(message.payloadString);
+            const deviceId = MQTT_CONFIG.deviceId;
+
+            if (topic === `airguard/${deviceId}/telemetry`) {
+                // Update UI immediately without waiting for API
+                updateDashboardUI(
+                    { ...payload, mqtt_connected: true },
+                    { status: 'ONLINE', last_seen: new Date().toISOString() }
+                );
+                updateChart(
+                    new Date().toISOString(),
+                    payload.temperature,
+                    payload.humidity,
+                    payload.gas_percentage
+                );
+                // Forward to backend to save in database
+                fetch(`${API_BASE}/log`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                }).catch(err => console.error('Error forwarding telemetry to backend:', err));
+            }
+
+            if (topic === `airguard/${deviceId}/status`) {
+                const statusVal = payload.status || 'OFFLINE';
+                const deviceBadge = document.getElementById('device-status');
+                if (deviceBadge) {
+                    deviceBadge.textContent = statusVal.replace('_', ' ');
+                    if (statusVal === 'ONLINE') deviceBadge.className = 'badge badge-success';
+                    else if (statusVal === 'WARMING_UP') deviceBadge.className = 'badge badge-warning';
+                    else deviceBadge.className = 'badge badge-danger';
+                }
+            }
+
+            if (topic === `airguard/${deviceId}/alert`) {
+                const alertBanner = document.getElementById('alert-banner');
+                if (alertBanner) alertBanner.classList.remove('hidden');
+            }
+
+        } catch (err) {
+            console.error('Error processing MQTT message:', err);
+        }
+    };
+
+    const connectOptions = {
+        useSSL: true,
+        userName: MQTT_CONFIG.username,
+        password: MQTT_CONFIG.password,
+        keepAliveInterval: 30,
+        cleanSession: true,
+        onSuccess: () => {
+            console.log('Browser MQTT connected to HiveMQ Cloud via WSS!');
+            mqttConnected = true;
+
+            // Update MQTT status badge
+            const mqttBadge = document.getElementById('mqtt-status');
+            if (mqttBadge) {
+                mqttBadge.textContent = 'CONNECTED';
+                mqttBadge.className = 'badge badge-success';
+            }
+
+            // Subscribe to all device topics
+            const deviceId = MQTT_CONFIG.deviceId;
+            mqttClient.subscribe(`airguard/${deviceId}/telemetry`);
+            mqttClient.subscribe(`airguard/${deviceId}/status`);
+            mqttClient.subscribe(`airguard/${deviceId}/alert`);
+        },
+        onFailure: (err) => {
+            console.error('Browser MQTT connection failed:', err.errorMessage);
+            mqttConnected = false;
+            // Retry after 5 seconds
+            setTimeout(initBrowserMQTT, 5000);
+        }
+    };
+
+    try {
+        mqttClient.connect(connectOptions);
+    } catch (err) {
+        console.error('Error connecting to MQTT:', err);
+    }
+};
+
+// Expose publishCommand so device controls can send commands via browser MQTT
+const publishMQTTCommand = (command) => {
+    if (!mqttClient || !mqttConnected) {
+        console.warn('Browser MQTT not connected, cannot publish command.');
+        return false;
+    }
+    const deviceId = MQTT_CONFIG.deviceId;
+    const msg = new Paho.MQTT.Message(JSON.stringify({ command }));
+    msg.destinationName = `airguard/${deviceId}/command`;
+    msg.qos = 1;
+    mqttClient.send(msg);
+    return true;
+};
+
+const publishMQTTSettings = (settings) => {
+    if (!mqttClient || !mqttConnected) return false;
+    const deviceId = MQTT_CONFIG.deviceId;
+    const msg = new Paho.MQTT.Message(JSON.stringify(settings));
+    msg.destinationName = `airguard/${deviceId}/settings`;
+    msg.qos = 1;
+    mqttClient.send(msg);
+    return true;
+};
+
 // --- Utility Functions ---
 const showNotification = (message, isError = false) => {
     alert((isError ? "Error: " : "Success: ") + message);
@@ -204,7 +351,23 @@ const stopDashboardPolling = () => {
 };
 
 const setupControls = () => {
+    // Map endpoint to MQTT command string
+    const commandMap = {
+        '/buzzer/test': 'TEST_BUZZER',
+        '/buzzer/silence': 'SILENCE_BUZZER',
+        '/alarm/reset': 'RESET_ALARM',
+        '/calibrate': 'CALIBRATE_BASELINE'
+    };
+
     const sendCommand = async (endpoint) => {
+        // Try browser MQTT first (works on Vercel)
+        const mqttCmd = commandMap[endpoint];
+        if (mqttCmd && publishMQTTCommand(mqttCmd)) {
+            // Also hit HTTP API for side-effects (e.g. reset_danger_state in DB)
+            fetch(`${API_BASE}${endpoint}`, { method: 'POST' }).catch(() => {});
+            return;
+        }
+        // Fallback to HTTP API (works on local)
         try {
             const res = await fetch(`${API_BASE}${endpoint}`, { method: 'POST' });
             const data = await res.json();
@@ -551,6 +714,9 @@ document.addEventListener("DOMContentLoaded", () => {
     setupControls();
     initChart();
     setupSettingsForm();
+
+    // Initialize browser-side MQTT over WebSocket (works on Vercel)
+    initBrowserMQTT();
 
     // History Listeners
     document.getElementById('status-filter').addEventListener('change', applyFilters);

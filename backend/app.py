@@ -14,6 +14,9 @@ STATIC_DIR = os.path.join(BASE_DIR, 'static')
 app = Flask(__name__, template_folder=TEMPLATE_DIR, static_folder=STATIC_DIR)
 CORS(app)
 
+# Initialize database on startup (module-level for Vercel support)
+database.init_db()
+
 # ====================================================
 # WEB TEMPLATE ROUTES
 # ====================================================
@@ -82,6 +85,51 @@ def api_settings():
         settings_data = database.get_settings()
         return jsonify(settings_data)
 
+@app.route('/api/log', methods=['POST'])
+def api_log():
+    """Receives a sensor reading or status from the client and saves it to the database"""
+    data = request.json
+    if not data:
+        return jsonify({"message": "No data provided", "status": "error"}), 400
+    
+    try:
+        import datetime
+        # Check if this is a telemetry log or a status update
+        if 'status' in data and 'temperature' not in data:
+            # Status update
+            status_val = data.get('status', 'OFFLINE')
+            mqtt_service.device_status['status'] = status_val
+            mqtt_service.device_status['last_seen'] = datetime.datetime.now().isoformat()
+            return jsonify({"status": "success"})
+            
+        # Telemetry log
+        log_data = {
+            "timestamp": data.get('timestamp', datetime.datetime.now().isoformat()),
+            "temperature": float(data['temperature']) if data.get('temperature') is not None else None,
+            "humidity": float(data['humidity']) if data.get('humidity') is not None else None,
+            "gas_raw": int(data['gas_raw']) if data.get('gas_raw') is not None else 0,
+            "gas_baseline": int(data['gas_baseline']) if data.get('gas_baseline') is not None else 0,
+            "gas_delta": int(data['gas_delta']) if data.get('gas_delta') is not None else 0,
+            "gas_percentage": float(data['gas_percentage']) if data.get('gas_percentage') is not None else 0.0,
+            "air_status": data.get('air_status', 'UNKNOWN'),
+            "buzzer_status": bool(data.get('buzzer_status', False)),
+            "danger_active": bool(data.get('danger_active', False)),
+            "rssi": int(data['rssi']) if data.get('rssi') is not None else None
+        }
+        
+        # Save to database
+        database.save_telemetry(log_data)
+        
+        # Update in-memory cache
+        mqtt_service.latest_telemetry = log_data
+        mqtt_service.device_status['status'] = 'ONLINE'
+        mqtt_service.device_status['last_seen'] = datetime.datetime.now().isoformat()
+        
+        return jsonify({"message": "Log saved successfully", "status": "success"})
+    except Exception as e:
+        print(f"Error saving log from client: {e}")
+        return jsonify({"message": str(e), "status": "error"}), 500
+
 # ====================================================
 # DEVICE CONTROL ROUTES
 # ====================================================
@@ -110,10 +158,7 @@ def api_calibrate():
 # APPLICATION STARTUP
 # ====================================================
 if __name__ == '__main__':
-    # Initialize the SQLite database
-    database.init_db()
-    
-    # Start MQTT connection in a background thread
+    # Start MQTT connection in a background thread (only runs locally, not on Vercel serverless)
     mqtt_thread = threading.Thread(target=mqtt_service.start_mqtt, daemon=True)
     mqtt_thread.start()
     
