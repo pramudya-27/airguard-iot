@@ -2,7 +2,10 @@ import sqlite3
 import datetime
 import os
 
-DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'airguard.db')
+if 'VERCEL' in os.environ:
+    DB_PATH = '/tmp/airguard.db'
+else:
+    DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'airguard.db')
 
 def get_connection():
     # check_same_thread=False allows background MQTT thread to use the same connection logic
