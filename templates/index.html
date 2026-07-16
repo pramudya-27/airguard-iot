@@ -1,0 +1,580 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AIRGUARD</title>
+    <!-- Wind Favicon -->
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Cpath fill='%230062ac' d='M0 96C0 78.3 14.3 64 32 64h384c53 0 96 43 96 96s-43 96-96 96h-32c-17.7 0-32-14.3-32-32s14.3-32 32-32h32c17.7 0 32-14.3 32-32s-14.3-32-32-32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32h256c53 0 96 43 96 96s-43 96-96 96h-32c-17.7 0-32-14.3-32-32s14.3-32 32-32h32c17.7 0 32-14.3 32-32s-14.3-32-32-32H32c-17.7 0-32-14.3-32-32zm0 160c0-17.7 14.3-32 32-32h128c53 0 96 43 96 96s-43 96-96 96h-32c-17.7 0-32-14.3-32-32s14.3-32 32-32h32c17.7 0 32-14.3 32-32s-14.3-32-32-32H32c-17.7 0-32-14.3-32-32z'/%3E%3C/svg%3E">
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="/static/css/style.css" />
+    <!-- Font Awesome for Icons -->
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"
+    />
+  </head>
+  <body>
+    <div class="app-container">
+      <!-- Sidebar / Navigation -->
+      <nav class="sidebar">
+        <div class="logo"><i class="fa-solid fa-wind"></i> AIRGUARD</div>
+        <ul class="nav-links">
+          <li>
+            <a href="#" data-page="dashboard" class="nav-link active"
+              ><i class="fa-solid fa-chart-line"></i> Dashboard</a
+            >
+          </li>
+          <li>
+            <a href="#" data-page="history" class="nav-link"
+              ><i class="fa-solid fa-table"></i> Riwayat</a
+            >
+          </li>
+          <li>
+            <a href="#" data-page="settings" class="nav-link"
+              ><i class="fa-solid fa-gear"></i> Pengaturan</a
+            >
+          </li>
+          <li>
+            <a href="#" data-page="documentation" class="nav-link"
+              ><i class="fa-solid fa-book"></i> Dokumentasi</a
+            >
+          </li>
+        </ul>
+      </nav>
+
+      <!-- Main Content -->
+      <main class="main-content">
+        <!-- VIEW 1: DASHBOARD -->
+        <section id="view-dashboard" class="page-view active show">
+          <!-- Header -->
+          <header class="header">
+            <div class="header-title">
+              <h1>Monitoring Kualitas Udara Berbasis ESP8266</h1>
+            </div>
+            <div class="header-status">
+              <div class="status-item">
+                <span>Device:</span>
+                <span id="device-status" class="badge badge-danger">OFFLINE</span>
+              </div>
+              <div class="status-item">
+                <span>MQTT:</span>
+                <span id="mqtt-status" class="badge badge-danger">DISCONNECTED</span>
+              </div>
+              <div class="status-item">
+                <span>Terakhir Update:</span>
+                <span id="last-update">-</span>
+              </div>
+            </div>
+          </header>
+
+          <!-- Alert Banner -->
+          <div id="alert-banner" class="alert-banner hidden">
+            <i class="fa-solid fa-triangle-exclamation"></i>
+            <strong>PERINGATAN!</strong> Terdeteksi peningkatan gas atau asap
+          </div>
+
+          <!-- Sensor Cards -->
+          <div class="cards-grid">
+            <!-- Suhu -->
+            <div class="card">
+              <div class="card-header">
+                <h3>Suhu Ruangan</h3>
+                <i class="fa-solid fa-temperature-half icon-blue"></i>
+              </div>
+              <div class="card-value"><span id="val-temp">--</span>°C</div>
+            </div>
+            <!-- Kelembapan -->
+            <div class="card">
+              <div class="card-header">
+                <h3>Kelembapan</h3>
+                <i class="fa-solid fa-droplet icon-blue"></i>
+              </div>
+              <div class="card-value"><span id="val-hum">--</span>%</div>
+            </div>
+            <!-- Kualitas Udara (Teks) -->
+            <div class="card">
+              <div class="card-header">
+                <h3>Kualitas Udara</h3>
+                <i class="fa-solid fa-leaf icon-green"></i>
+              </div>
+              <div class="card-value">
+                <span id="val-air-status" class="status-text green">BAIK</span>
+              </div>
+            </div>
+            <!-- Buzzer -->
+            <div class="card">
+              <div class="card-header">
+                <h3>Buzzer</h3>
+                <i class="fa-solid fa-volume-high icon-blue"></i>
+              </div>
+              <div class="card-value">
+                <span id="val-buzzer">OFF</span>
+              </div>
+            </div>
+            <!-- RSSI -->
+            <div class="card">
+              <div class="card-header">
+                <h3>Sinyal WiFi</h3>
+                <i class="fa-solid fa-wifi icon-blue"></i>
+              </div>
+              <div class="card-value"><span id="val-rssi">--</span> dBm</div>
+            </div>
+          </div>
+
+          <!-- Middle Section: MQ135 Gauge & Controls -->
+          <div class="middle-grid">
+            <!-- Gauge Card -->
+            <div class="card gauge-card">
+              <h3>Indikator Gas/Asap (MQ135)</h3>
+              <div class="gauge-container">
+                <div class="gauge-svg-wrapper">
+                  <svg class="gauge-svg" viewBox="0 0 100 55">
+                    <!-- Background Track -->
+                    <path
+                      class="gauge-track"
+                      d="M 10 50 A 40 40 0 0 1 90 50"
+                      fill="none"
+                      stroke="#e2e8f0"
+                      stroke-width="8"
+                      stroke-linecap="round"
+                    />
+                    <!-- Dynamic Fill -->
+                    <path
+                      id="gauge-fill"
+                      class="gauge-fill"
+                      d="M 10 50 A 40 40 0 0 1 90 50"
+                      fill="none"
+                      stroke="url(#gauge-gradient)"
+                      stroke-width="8"
+                      stroke-linecap="round"
+                      stroke-dasharray="125.66"
+                      stroke-dashoffset="125.66"
+                    />
+
+                    <!-- Gradient definition -->
+                    <defs>
+                      <linearGradient
+                        id="gauge-gradient"
+                        x1="0%"
+                        y1="0%"
+                        x2="100%"
+                        y2="0%"
+                      >
+                        <stop offset="0%" stop-color="#10b981" />
+                        <!-- Green -->
+                        <stop offset="50%" stop-color="#f59e0b" />
+                        <!-- Yellow -->
+                        <stop offset="100%" stop-color="#ef4444" />
+                        <!-- Red -->
+                      </linearGradient>
+                    </defs>
+                  </svg>
+                  <div class="gauge-value">
+                    <span id="val-gas-percent">0</span>%
+                  </div>
+                </div>
+                <div class="gauge-details">
+                  <div>RAW: <span id="val-raw">0</span></div>
+                  <div>BASELINE: <span id="val-baseline">0</span></div>
+                  <div>DELTA: <span id="val-delta">0</span></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Controls Card -->
+            <div class="card controls-card">
+              <h3>Kontrol Perangkat</h3>
+              <p class="subtitle">
+                Kendalikan ESP8266 secara nirkabel via MQTT
+              </p>
+              <div class="btn-grid">
+                <button class="btn btn-outline" id="btn-test-buzzer">
+                  <i class="fa-solid fa-volume-up"></i> Uji Buzzer
+                </button>
+                <button class="btn btn-warning" id="btn-silence-buzzer">
+                  <i class="fa-solid fa-bell-slash"></i> Senyapkan 30 Detik
+                </button>
+                <button class="btn btn-danger" id="btn-reset-alarm">
+                  <i class="fa-solid fa-rotate-left"></i> Reset Alarm
+                </button>
+                <button class="btn btn-primary" id="btn-calibrate">
+                  <i class="fa-solid fa-check-to-slot"></i> Kalibrasi Baseline
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Charts Section -->
+          <div class="charts-section">
+            <div class="card chart-card">
+              <h3>Grafik Real-time</h3>
+              <div class="chart-container">
+                <canvas id="mainChart"></canvas>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- VIEW 2: HISTORY -->
+        <section id="view-history" class="page-view">
+          <header class="header">
+            <div class="header-title">
+              <h1>Riwayat Data Sensor</h1>
+            </div>
+          </header>
+
+          <div class="card">
+            <div class="table-toolbar">
+              <div class="filter-box">
+                <select id="status-filter" class="select-input">
+                  <option value="ALL">Semua Status</option>
+                  <option value="BAIK">BAIK</option>
+                  <option value="SEDANG">SEDANG</option>
+                  <option value="BURUK">BURUK</option>
+                  <option value="BAHAYA">BAHAYA</option>
+                </select>
+              </div>
+              <div class="filter-box">
+                <select id="temp-filter" class="select-input">
+                  <option value="ALL">Semua Suhu</option>
+                  <option value="COLD">Dingin (&lt; 25°C)</option>
+                  <option value="NORMAL">Normal (25°C - 30°C)</option>
+                  <option value="HOT">Panas (&gt; 30°C)</option>
+                </select>
+              </div>
+              <div class="filter-box">
+                <select id="hum-filter" class="select-input">
+                  <option value="ALL">Semua Kelembapan</option>
+                  <option value="DRY">Kering (&lt; 50%)</option>
+                  <option value="NORMAL">Normal (50% - 70%)</option>
+                  <option value="WET">Lembap (&gt; 70%)</option>
+                </select>
+              </div>
+              <div class="filter-box">
+                <input type="date" id="date-filter" />
+              </div>
+              <div class="view-mode-box">
+                <select id="view-mode-select" class="select-input">
+                  <option value="true" selected>Ringkasan 1 Menit</option>
+                  <option value="false">Semua Data</option>
+                </select>
+              </div>
+              <div class="action-buttons">
+                <button class="btn btn-primary" id="btn-export">
+                  <i class="fa-solid fa-download"></i> Export CSV
+                </button>
+                <button class="btn btn-danger" id="btn-delete-all">
+                  <i class="fa-solid fa-trash-can"></i> Hapus Semua
+                </button>
+              </div>
+            </div>
+
+            <div class="table-container">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>No</th>
+                    <th>Tanggal</th>
+                    <th>Jam</th>
+                    <th>Suhu (°C)</th>
+                    <th>Kelembapan (%)</th>
+                    <th>MQ135 (Raw)</th>
+                    <th>Status Udara</th>
+                    <th>Buzzer</th>
+                    <th>Aksi</th>
+                  </tr>
+                </thead>
+                <tbody id="history-tbody">
+                  <!-- Data will be populated here via JS -->
+                </tbody>
+              </table>
+            </div>
+
+            <!-- Pagination Section -->
+            <div class="pagination-container">
+              <button class="btn btn-outline" id="btn-prev" disabled>
+                <i class="fa-solid fa-chevron-left"></i> Sebelumnya
+              </button>
+              <div class="pagination-info" id="pagination-info">
+                Menampilkan 0 - 0 dari 0 data
+              </div>
+              <button class="btn btn-outline" id="btn-next" disabled>
+                Selanjutnya <i class="fa-solid fa-chevron-right"></i>
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <!-- VIEW 3: SETTINGS -->
+        <section id="view-settings" class="page-view">
+          <header class="header">
+            <div class="header-title">
+              <h1>Pengaturan Sistem</h1>
+            </div>
+          </header>
+
+          <div class="card settings-card">
+            <form id="settings-form">
+              <div class="form-section">
+                <h3>
+                  <i class="fa-solid fa-sliders"></i> Ambang Batas Kualitas
+                  Udara (Threshold)
+                </h3>
+                <p class="help-text">
+                  Atur batas persentase (0-100%) untuk menentukan status udara.
+                </p>
+
+                <div class="form-group">
+                  <label for="threshold_moderate">SEDANG (Moderate)</label>
+                  <input
+                    type="number"
+                    id="threshold_moderate"
+                    name="threshold_moderate"
+                    min="0"
+                    max="100"
+                    value="10"
+                  />
+                </div>
+
+                <div class="form-group">
+                  <label for="threshold_poor">BURUK (Poor)</label>
+                  <input
+                    type="number"
+                    id="threshold_poor"
+                    name="threshold_poor"
+                    min="0"
+                    max="100"
+                    value="30"
+                  />
+                </div>
+
+                <div class="form-group">
+                  <label for="threshold_danger">BAHAYA (Danger)</label>
+                  <input
+                    type="number"
+                    id="threshold_danger"
+                    name="threshold_danger"
+                    min="0"
+                    max="100"
+                    value="60"
+                  />
+                </div>
+              </div>
+
+              <div class="form-section">
+                <h3>
+                  <i class="fa-solid fa-volume-high"></i> Pengaturan Buzzer
+                </h3>
+
+                <div class="form-group checkbox-group">
+                  <label class="switch">
+                    <input
+                      type="checkbox"
+                      id="auto_buzzer"
+                      name="auto_buzzer"
+                      checked
+                    />
+                    <span class="slider round"></span>
+                  </label>
+                  <span>Aktifkan Automatic Buzzer saat status BAHAYA</span>
+                </div>
+              </div>
+
+              <div class="form-actions">
+                <button type="submit" class="btn btn-primary">
+                  <i class="fa-solid fa-save"></i> Save Settings
+                </button>
+              </div>
+            </form>
+          </div>
+        </section>
+
+        <!-- VIEW 4: DOCUMENTATION -->
+        <section id="view-documentation" class="page-view">
+          <header class="header">
+            <div class="header-title">
+              <h1>Dokumentasi & Panduan Fitur</h1>
+            </div>
+          </header>
+
+          <div class="doc-container">
+            <!-- Section 1: Ringkasan Proyek -->
+            <div class="card doc-card">
+              <h3>
+                <i class="fa-solid fa-circle-info icon-blue"></i> Tentang
+                AIRGUARD
+              </h3>
+              <p class="doc-text">
+                <strong>AIRGUARD</strong> adalah sistem monitoring kualitas
+                udara, suhu, dan kelembapan ruangan berbasis Internet of Things
+                (IoT). Alat ini dirancang untuk mendeteksi adanya gas berbahaya,
+                asap, atau kebocoran gas secara real-time demi menjaga keamanan
+                lingkungan sekitar.
+              </p>
+            </div>
+
+            <!-- Section 2: Sensor & Hardware -->
+            <div class="card doc-card">
+              <h3>
+                <i class="fa-solid fa-microchip icon-blue"></i> Spesifikasi
+                Perangkat Keras
+              </h3>
+              <div class="doc-grid">
+                <div class="doc-item">
+                  <strong>NodeMCU ESP8266</strong>
+                  <p>
+                    Mikrokontroler berbasis WiFi yang bertugas membaca data
+                    sensor, memproses data logika lokal (seperti kontrol
+                    buzzer), dan mengirimkan data secara nirkabel via protokol
+                    MQTT.
+                  </p>
+                </div>
+                <div class="doc-item">
+                  <strong>Sensor DHT22</strong>
+                  <p>
+                    Sensor digital yang mengukur suhu (°C) dan kelembapan udara
+                    (%) dengan tingkat akurasi tinggi dan transmisi sinyal
+                    digital yang stabil.
+                  </p>
+                </div>
+                <div class="doc-item">
+                  <strong>Sensor MQ-135</strong>
+                  <p>
+                    Sensor kualitas udara gas elektrokimia yang sensitif
+                    terhadap gas berbahaya (Amonia, Benzena, Alkohol, Asap,
+                    CO2). Data diukur berdasarkan selisih (Delta) terhadap nilai
+                    acuan (Baseline).
+                  </p>
+                </div>
+                <div class="doc-item">
+                  <strong>Buzzer & Alarm</strong>
+                  <p>
+                    Aktuator suara sebagai indikator bahaya lokal. Buzzer akan
+                    berbunyi putus-putus cepat jika kualitas udara menyentuh
+                    kategori "BAHAYA".
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <!-- Section 3: Arsitektur IoT -->
+            <div class="card doc-card">
+              <h3>
+                <i class="fa-solid fa-network-wired icon-blue"></i> Arsitektur
+                Komunikasi Data
+              </h3>
+              <ol class="doc-list">
+                <li>
+                  <strong>Sensor -> ESP8266:</strong> ESP8266 membaca data DHT22
+                  (suhu/kelembapan) dan MQ135 (Raw) setiap 2 detik.
+                </li>
+                <li>
+                  <strong>ESP8266 -> HiveMQ Cloud (MQTT):</strong> ESP8266
+                  mempublikasikan payload JSON ke topik
+                  <code>airguard/AIRGUARD-01/telemetry</code> secara real-time
+                  via koneksi secure TLS (Port 8883).
+                </li>
+                <li>
+                  <strong>Flask Backend -> HiveMQ Cloud:</strong> Backend Python
+                  Flask berlangganan ke broker MQTT HiveMQ Cloud untuk menerima
+                  telemetry secara non-blocking di background thread.
+                </li>
+                <li>
+                  <strong>Penyimpanan SQLite:</strong> Backend menyaring data:
+                  menyajikan data instan ke memory RAM untuk Live Dashboard,
+                  namun hanya menyimpan data ke SQLite database setiap 30 detik
+                  untuk menghindari overload.
+                </li>
+                <li>
+                  <strong>Web Dashboard (SPA):</strong> Halaman web meminta data
+                  secara asinkronus (Fetch API) untuk menampilkan data
+                  real-time, grafik Chart.js, riwayat kompresi 1 menit, dan
+                  memicu kontrol perangkat.
+                </li>
+              </ol>
+            </div>
+
+            <!-- Section 4: Panduan Fitur Web -->
+            <div class="card doc-card">
+              <h3>
+                <i class="fa-solid fa-list-check icon-blue"></i> Penjelasan
+                Fitur Dashboard
+              </h3>
+              <div class="doc-grid">
+                <div class="doc-item">
+                  <strong>Live Dashboard</strong>
+                  <p>
+                    Menampilkan widget interaktif suhu, kelembapan, status
+                    udara, dan grafik real-time yang diperbarui otomatis tiap 2
+                    detik tanpa kedip.
+                  </p>
+                </div>
+                <div class="doc-item" style="grid-column: 1 / -1">
+                  <strong>Kontrol Jarak Jauh (ESP8266 Control Panel)</strong>
+                  <p style="margin-bottom: 0.75rem">
+                    Panel kontrol nirkabel menggunakan protokol MQTT untuk
+                    mengirim perintah ke perangkat secara non-blocking:
+                  </p>
+                  <ul
+                    style="
+                      padding-left: 1.25rem;
+                      font-size: 0.875rem;
+                      line-height: 1.6;
+                      color: var(--text-secondary);
+                    "
+                  >
+                    <li style="margin-bottom: 0.5rem">
+                      <strong>Uji Buzzer</strong>: Membunyikan buzzer ESP8266
+                      secara lokal selama 3 detik. Berguna untuk menguji
+                      integritas fisik/kabel aktuator buzzer tanpa harus
+                      menunggu paparan gas berbahaya.
+                    </li>
+                    <li style="margin-bottom: 0.5rem">
+                      <strong>Senyapkan 30 Detik</strong>: Menonaktifkan suara
+                      alarm buzzer selama 30 detik meskipun sensor MQ135 sedang
+                      mendeteksi kualitas udara dalam kondisi BAHAYA. Memberi
+                      waktu aman bagi pengguna untuk membersihkan udara kotor
+                      tanpa kebisingan.
+                    </li>
+                    <li style="margin-bottom: 0.5rem">
+                      <strong>Reset Alarm</strong>: Menghentikan bunyi alarm
+                      buzzer secara paksa dan mengembalikan indikator status
+                      bahaya perangkat (danger active) ke kondisi normal/aman.
+                    </li>
+                    <li style="margin-bottom: 0.5rem">
+                      <strong>Kalibrasi Baseline</strong>: Mengambil nilai
+                      rata-rata pembacaan sensor MQ135 (50 sampel) saat tombol
+                      ditekan untuk dijadikan nilai acuan (Baseline) udara
+                      bersih baru di memori perangkat. Memastikan pembacaan
+                      persentase gas tetap akurat secara dinamis.
+                    </li>
+                  </ul>
+                </div>
+                <div class="doc-item">
+                  <strong>Riwayat & Kompresi Data</strong>
+                  <p>
+                    Menampilkan data historis. Dilengkapi pilihan
+                    <em>"Ringkasan 1 Menit"</em> (data dirata-rata per menit
+                    agar rapi) dan <em>"Semua Data"</em> (data mentah per 30
+                    detik), serta fitur ekspor CSV dan hapus data.
+                  </p>
+                </div>
+                <div class="doc-item">
+                  <strong>Pengaturan Fleksibel</strong>
+                  <p>
+                    Ambang batas (threshold) kualitas udara dan toggle "Auto
+                    Buzzer" dapat diatur dinamis dari web tanpa perlu menulis
+                    ulang (flash) kode mikrokontroler.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+    <script src="/static/js/dashboard.js"></script>
+  </body>
+</html>

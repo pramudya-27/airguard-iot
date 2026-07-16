@@ -1,0 +1,30 @@
+# Virtual environment
+backend/venv/
+venv/
+.venv/
+ENV/
+.env
+# Python cache
+**/__pycache__/
+*.py[cod]
+*$py.class
+.frontend/
+
+# SQLite database (ignore local database)
+backend/airguard.db
+airguard.db
+*.db
+*.sqlite3
+
+# Logs and dumps
+*.log
+*.stackdump
+
+# IDE and agent configs
+.vscode/
+.idea/
+.agents/
+.gemini/
+
+# Obsolete React Frontend
+frontend/
