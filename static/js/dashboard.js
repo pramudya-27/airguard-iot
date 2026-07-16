@@ -9,7 +9,6 @@ const API_BASE = '/api';
 /* ==========================================================================
    BROWSER MQTT CLIENT (For Vercel Serverless Compatibility)
    Connects directly from browser to HiveMQ Cloud via WebSocket (wss://)
-   and forwards incoming telemetry to the Flask backend via /api/log
    ========================================================================== */
 const MQTT_CONFIG = {
     host: '712b2488276943edbd55e938ca1ba12b.s1.eu.hivemq.cloud',
@@ -17,31 +16,58 @@ const MQTT_CONFIG = {
     username: 'mikail',
     password: 'mikail123',
     deviceId: 'AIRGUARD-01',
-    clientId: 'airguard-browser-' + Math.random().toString(16).substring(2, 8)
+    // Stable unique clientId per browser session (no re-randomize on reconnect)
+    clientId: 'web-' + Date.now().toString(36)
 };
 
 let mqttClient = null;
 let mqttConnected = false;
+let mqttReconnectTimer = null;  // Guard: only ONE reconnect timer at a time
+let mqttRetryDelay = 5000;      // Start at 5s, cap at 30s
+
+const setMqttStatusBadge = (text, cls) => {
+    const el = document.getElementById('mqtt-status');
+    if (el) { el.textContent = text; el.className = `badge ${cls}`; }
+};
+
+const scheduleMqttReconnect = () => {
+    // Cancel any existing reconnect timer to avoid stacking timers
+    if (mqttReconnectTimer) clearTimeout(mqttReconnectTimer);
+    setMqttStatusBadge('RECONNECTING...', 'badge-warning');
+    console.log(`Browser MQTT: reconnecting in ${mqttRetryDelay / 1000}s...`);
+    mqttReconnectTimer = setTimeout(() => {
+        mqttReconnectTimer = null;
+        initBrowserMQTT();
+    }, mqttRetryDelay);
+    // Exponential backoff: 5s → 10s → 20s → 30s max
+    mqttRetryDelay = Math.min(mqttRetryDelay * 2, 30000);
+};
 
 const initBrowserMQTT = () => {
     if (typeof Paho === 'undefined') {
-        console.warn('Paho MQTT library not loaded, skipping browser MQTT.');
+        console.warn('Paho MQTT library not loaded.');
         return;
     }
 
+    // Disconnect & destroy existing client cleanly before creating a new one
+    if (mqttClient) {
+        try {
+            mqttClient.onConnectionLost = null; // Detach handler to prevent recursion
+            if (mqttClient.isConnected()) mqttClient.disconnect();
+        } catch (e) { /* ignore */ }
+        mqttClient = null;
+    }
+
+    mqttConnected = false;
     mqttClient = new Paho.MQTT.Client(MQTT_CONFIG.host, MQTT_CONFIG.port, MQTT_CONFIG.clientId);
 
-    mqttClient.onConnectionLost = (responseObject) => {
-        console.warn('Browser MQTT connection lost:', responseObject.errorMessage);
+    mqttClient.onConnectionLost = (resp) => {
+        // Only react if we were previously connected (prevent cascade)
+        if (!mqttConnected) return;
         mqttConnected = false;
-        // Update status badge immediately
-        const mqttBadge = document.getElementById('mqtt-status');
-        if (mqttBadge) {
-            mqttBadge.textContent = 'DISCONNECTED';
-            mqttBadge.className = 'badge badge-danger';
-        }
-        // Reconnect after 5 seconds
-        setTimeout(initBrowserMQTT, 5000);
+        console.warn('Browser MQTT connection lost:', resp.errorMessage);
+        setMqttStatusBadge('DISCONNECTED', 'badge-danger');
+        scheduleMqttReconnect();
     };
 
     mqttClient.onMessageArrived = async (message) => {
@@ -51,7 +77,6 @@ const initBrowserMQTT = () => {
             const deviceId = MQTT_CONFIG.deviceId;
 
             if (topic === `airguard/${deviceId}/telemetry`) {
-                // Update UI immediately without waiting for API
                 updateDashboardUI(
                     { ...payload, mqtt_connected: true },
                     { status: 'ONLINE', last_seen: new Date().toISOString() }
@@ -62,16 +87,15 @@ const initBrowserMQTT = () => {
                     payload.humidity,
                     payload.gas_percentage
                 );
-                // Forward to backend to save in database
                 fetch(`${API_BASE}/log`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload)
-                }).catch(err => console.error('Error forwarding telemetry to backend:', err));
+                }).catch(() => {});
             }
 
             if (topic === `airguard/${deviceId}/status`) {
-                const statusVal = payload.status || 'OFFLINE';
+                const statusVal = (payload.status || 'OFFLINE').toUpperCase();
                 const deviceBadge = document.getElementById('device-status');
                 if (deviceBadge) {
                     deviceBadge.textContent = statusVal.replace('_', ' ');
@@ -85,59 +109,42 @@ const initBrowserMQTT = () => {
                 const alertBanner = document.getElementById('alert-banner');
                 if (alertBanner) alertBanner.classList.remove('hidden');
             }
-
         } catch (err) {
             console.error('Error processing MQTT message:', err);
         }
     };
 
-    const connectOptions = {
+    mqttClient.connect({
         useSSL: true,
         userName: MQTT_CONFIG.username,
         password: MQTT_CONFIG.password,
-        keepAliveInterval: 30,
+        keepAliveInterval: 60,
         cleanSession: true,
+        timeout: 10,
         onSuccess: () => {
-            console.log('Browser MQTT connected to HiveMQ Cloud via WSS!');
             mqttConnected = true;
-
-            // Update MQTT status badge
-            const mqttBadge = document.getElementById('mqtt-status');
-            if (mqttBadge) {
-                mqttBadge.textContent = 'CONNECTED';
-                mqttBadge.className = 'badge badge-success';
-            }
-
-            // Subscribe to all device topics
+            mqttRetryDelay = 5000; // Reset backoff on successful connect
+            if (mqttReconnectTimer) { clearTimeout(mqttReconnectTimer); mqttReconnectTimer = null; }
+            console.log('Browser MQTT connected to HiveMQ Cloud!');
+            setMqttStatusBadge('CONNECTED', 'badge-success');
             const deviceId = MQTT_CONFIG.deviceId;
             mqttClient.subscribe(`airguard/${deviceId}/telemetry`);
             mqttClient.subscribe(`airguard/${deviceId}/status`);
             mqttClient.subscribe(`airguard/${deviceId}/alert`);
         },
         onFailure: (err) => {
-            console.error('Browser MQTT connection failed:', err.errorMessage);
             mqttConnected = false;
-            // Retry after 5 seconds
-            setTimeout(initBrowserMQTT, 5000);
+            console.error('Browser MQTT connection failed:', err.errorMessage);
+            setMqttStatusBadge('DISCONNECTED', 'badge-danger');
+            scheduleMqttReconnect();
         }
-    };
-
-    try {
-        mqttClient.connect(connectOptions);
-    } catch (err) {
-        console.error('Error connecting to MQTT:', err);
-    }
+    });
 };
 
-// Expose publishCommand so device controls can send commands via browser MQTT
 const publishMQTTCommand = (command) => {
-    if (!mqttClient || !mqttConnected) {
-        console.warn('Browser MQTT not connected, cannot publish command.');
-        return false;
-    }
-    const deviceId = MQTT_CONFIG.deviceId;
+    if (!mqttClient || !mqttConnected) return false;
     const msg = new Paho.MQTT.Message(JSON.stringify({ command }));
-    msg.destinationName = `airguard/${deviceId}/command`;
+    msg.destinationName = `airguard/${MQTT_CONFIG.deviceId}/command`;
     msg.qos = 1;
     mqttClient.send(msg);
     return true;
@@ -145,13 +152,13 @@ const publishMQTTCommand = (command) => {
 
 const publishMQTTSettings = (settings) => {
     if (!mqttClient || !mqttConnected) return false;
-    const deviceId = MQTT_CONFIG.deviceId;
     const msg = new Paho.MQTT.Message(JSON.stringify(settings));
-    msg.destinationName = `airguard/${deviceId}/settings`;
+    msg.destinationName = `airguard/${MQTT_CONFIG.deviceId}/settings`;
     msg.qos = 1;
     mqttClient.send(msg);
     return true;
 };
+
 
 // --- Utility Functions ---
 const showNotification = (message, isError = false) => {
